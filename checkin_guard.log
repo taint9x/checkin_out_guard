@@ -1,0 +1,7 @@
+2026-07-03T12:32:38.542304 === main() started (build 2026-07-03.2, --shutdown mode) ===
+2026-07-03T12:32:38.542751 policy HKLM\SYSTEM\CurrentControlSet\Control\WaitToKillServiceTimeout = '5000'
+2026-07-03T12:47:42.915705 confirmed shutdown request - initiating real shutdown
+2026-07-03T12:47:42.916292 no resident instance found, shutting down directly
+2026-07-03T14:18:46.993043 === main() started (build 2026-07-03.2) ===
+2026-07-03T14:18:46.993662 policy HKLM\SYSTEM\CurrentControlSet\Control\WaitToKillServiceTimeout = '5000'
+2026-07-03T14:18:47.073493 listener window created, hwnd=67128
