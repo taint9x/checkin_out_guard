@@ -46,6 +46,16 @@ from PySide6.QtWidgets import (QApplication, QWidget, QLabel, QMenu,
 # CAU HINH - user tu sua cac gia tri duoi day
 # =========================================================================
 CHECKIN_URL = "https://daohainam.com/"   # user tu thay URL that
+
+# Khung gio nhac nho khi WIDGET_ALERT_MODE = "schedule". ("HH:MM","HH:MM"),
+# tinh theo mui gio TZ_UTC_OFFSET (khong phu thuoc mui gio cua Windows).
+ALERT_SCHEDULE = [
+    ("08:00", "10:00"),   # nhac check-in buoi sang
+    ("17:00", "19:00"),   # nhac check-out buoi chieu
+]
+TZ_UTC_OFFSET = 7         # UTC+7 (gio Viet Nam)
+
+# Tieu de va noi dung popup nhac nho check-in / check-out.
 POPUP_TITLE = "Check-in / Check-out Reminder"
 POPUP_MESSAGE = "Have you checked in / checked out yet?"
 
@@ -80,17 +90,14 @@ ACTION_SEGMENT_WIDTH = 88             # do rong doan "action" (Check-in/Done) be
 #   "schedule" - pulse trong khung gio ALERT_SCHEDULE va TU TAT sau khi user
 #                bam Check-in / xac nhan (den khung gio sau moi bao lai)
 WIDGET_ALERT_MODE = "schedule"
-PULSE_PERIOD = 1.2          # do dai 1 nhip pulse (giay) - cham, em
-PULSE_BURST_CYCLES = 10      # so nhip moi dot (10 nhip ~ 12s chuyen dong)
+# So NHIP (option A: vong glow; option B: vong nhay) moi dot pulse. Do dai
+# THUC TE cua 1 dot = PULSE_BURST_CYCLES * (nhip cua option dang active) -
+# xem _state_tick._burst_cycle_seconds - nen doi GLOW_PERIOD/BOUNCE_PERIOD/
+# BOUNCE_REST_SECONDS ben duoi KHONG lam thay doi SO LAN nhap nhay/nhay,
+# chi doi TOC DO/do dai cua tung nhip.
+PULSE_BURST_CYCLES = 10
 PULSE_REST_SECONDS = 120     # nghi giua 2 dot - du dai de khong gay kho chiu
 
-# Khung gio nhac nho khi WIDGET_ALERT_MODE = "schedule". ("HH:MM","HH:MM"),
-# tinh theo mui gio TZ_UTC_OFFSET (khong phu thuoc mui gio cua Windows).
-ALERT_SCHEDULE = [
-    ("07:45", "10:00"),   # nhac check-in buoi sang
-    ("10:42", "19:00"),   # nhac check-out buoi chieu
-]
-TZ_UTC_OFFSET = 7         # UTC+7 (gio Viet Nam)
 
 # Mau pill 2 tong (khop thiet ke trong reminder_widget_ux_options.html):
 # doan "brand" (logo + MISA) nen xanh navy dam, doan "action" (Check-in)
@@ -109,17 +116,21 @@ COLOR_DONE = QColor(16, 124, 16)
 #              BOUNCE_PERIOD, nhanh dut khoat - khop CSS keyframes
 #              bounceOnce 0.6s) ROI DUNG YEN BOUNCE_REST_SECONDS moi lap
 #              lai - khong nhay lien tuc khong nghi (de gay kho chiu).
-# 2 dot lien tiep (theo lich PULSE_BURST_CYCLES/PULSE_REST_SECONDS o tren)
-# luan phien A -> B -> A -> B... cho den khi user check-in.
+# WIDGET_PULSE_STYLE chon option nao duoc dung cho cac dot pulse (theo lich
+# PULSE_BURST_CYCLES/PULSE_REST_SECONDS o tren):
+#   "both" - LUAN PHIEN A -> B -> A -> B... moi dot (mac dinh, nhu truoc gio)
+#   "A"    - CHI dung Option A (soft glow pulse) cho moi dot
+#   "B"    - CHI dung Option B (badge dot + bounce nhe) cho moi dot
+WIDGET_PULSE_STYLE = "both"
 # Mau glow Option A - SUA MA HEX o day de doi mau nhap nhay (vd doi sang
 # xanh duong "#054AFF", do "#FF3B30", tim "#8E24AA"...).
-WIDGET_GLOW_COLOR_HEX = "#ECAD4E"      # vang cam (mac dinh)
+WIDGET_GLOW_COLOR_HEX = "#FFC30E"      # vang cam (mac dinh)
 COLOR_GLOW_A = QColor(WIDGET_GLOW_COLOR_HEX)
 COLOR_DOT_B = QColor(255, 59, 48)     # #FF3B30 - mau cham do Option B
 GLOW_PERIOD = 0.9       # option A: giay/nhip glow - khop CSS keyframes glowPulse
 DOT_PERIOD = 0.9        # option B: giay/nhip cham do - khop CSS keyframes dotPulse
 BOUNCE_PERIOD = 0.6     # option B: giay/1 VONG nhay - khop CSS keyframes bounceOnce
-                        # (nhanh hon PULSE_PERIOD nhieu de nhay dut khoat)
+                        # (nhanh, dut khoat)
 BOUNCE_REST_SECONDS = 1.5  # option B: dung yen giua 2 vong nhay (1-2 giay
                            # de khong gay kho chiu vi nhay lien tuc)
 # Khoang trong (px) quanh pill de ve glow/nhay ma khong bi cat xen boi bien
@@ -197,9 +208,9 @@ def lerp_color(c1, c2, t):
 
 # Keyframe (fraction 0..1, offset px) cua hieu ung bounceOnce trong
 # reminder_widget_ux_options.html: 1 cu nhay len roi 1 cu nhay phu nho hon.
-# Option B LAP LAI keyframe nay moi nhip BOUNCE_PERIOD (nhanh, dut khoat -
-# KHONG phai PULSE_PERIOD cua ca burst) suot ca dot pulse - xem
-# Controller._anim_tick.
+# Option B LAP LAI keyframe nay dung PULSE_BURST_CYCLES vong moi dot pulse
+# (moi vong = BOUNCE_PERIOD giay nhay + BOUNCE_REST_SECONDS giay nghi) - xem
+# Controller._anim_tick va Controller._burst_cycle_seconds.
 _BOUNCE_KEYFRAMES = [(0.0, 0.0), (0.3, -6.0), (0.5, 0.0), (0.7, -3.0), (1.0, 0.0)]
 
 
@@ -573,10 +584,13 @@ class Controller:
         self._ack_done = False          # user da check-in/xac nhan trong khung gio
         self._burst_until = 0.0         # dot pulse hien tai ket thuc luc (epoch)
         self._next_burst_at = 0.0       # dot pulse ke tiep bat dau luc (epoch)
-        # "A" hoac "B" - dot pulse HIEN TAI/KE TIEP dung option nao (luan
-        # phien - xem _state_tick). Khoi tao "B" de dot dau tien (ngay khi
-        # vao khung gio) toggle thanh "A" dung theo so do trang thai.
-        self._active_option = "B"
+        # "A" hoac "B" - dot pulse HIEN TAI/KE TIEP dung option nao (theo
+        # WIDGET_PULSE_STYLE - xem _state_tick). Neu style = "both", khoi
+        # tao "B" de dot dau tien (ngay khi vao khung gio) toggle thanh "A"
+        # dung theo so do trang thai; neu style = "A"/"B" thi dung co dinh
+        # option do ngay tu dau.
+        self._active_option = ("B" if WIDGET_PULSE_STYLE == "both"
+                                else WIDGET_PULSE_STYLE)
         # Option B: lich rieng cho tung VONG nhay cua pill (nhay
         # BOUNCE_PERIOD giay roi nghi BOUNCE_REST_SECONDS giay) - doc lap
         # voi lich dot/nghi PULSE_BURST_CYCLES/PULSE_REST_SECONDS o tren.
@@ -786,11 +800,14 @@ class Controller:
         if in_schedule and not self._prev_in_schedule:
             # Canh bat dau khung gio: reset trang thai "da xac nhan" cua
             # khung gio truoc, va dat lai de dot pulse DAU TIEN cua khung
-            # gio nay la Option A (xem so do trang thai IDLE->ACTIVE_A).
-            # KHONG tu hien widget / khong mo popup - neu user da chon Hide
-            # thi ton trong lua chon do, chi nhac bang tray icon nhap nhay.
+            # gio nay la Option A khi WIDGET_PULSE_STYLE = "both" (xem so do
+            # trang thai IDLE->ACTIVE_A); neu style co dinh "A"/"B" thi giu
+            # nguyen option do. KHONG tu hien widget / khong mo popup - neu
+            # user da chon Hide thi ton trong lua chon do, chi nhac bang
+            # tray icon nhap nhay.
             self._ack_done = False
-            self._active_option = "B"
+            self._active_option = ("B" if WIDGET_PULSE_STYLE == "both"
+                                    else WIDGET_PULSE_STYLE)
         self._prev_in_schedule = in_schedule
 
         desired_visible = not self.user_hidden
@@ -816,12 +833,15 @@ class Controller:
         """Moi 0.5s: cap nhat an/hien, trang thai done, va lap lich dot pulse.
 
         Widget (mau gradient, luon hien tren taskbar): pulse theo MO HINH
-        DOT - chay PULSE_BURST_CYCLES nhip muot (~3.6s) roi NGHI
-        PULSE_REST_SECONDS, tranh gay kho chiu vi widget luon o trong tam
-        mat. Tray icon (nho, de bi bo qua khi ẩn xuống khay) thi nhap nhay
-        LIEN TUC suot luc con canh bao - xem _tray_pulse_tick. Sau khi user
-        da check-in/xac nhan (ack) trong khung gio -> ca 2 im lang, nut
-        chuyen "✓ Done" xanh la.
+        DOT - chay dung PULSE_BURST_CYCLES nhip (vong glow o Option A / vong
+        nhay o Option B) roi NGHI PULSE_REST_SECONDS, tranh gay kho chiu vi
+        widget luon o trong tam mat. Do dai THUC TE cua 1 dot phu thuoc
+        option dang active (xem _burst_cycle_seconds) de SO LAN nhap nhay/
+        nhay luon dung bang PULSE_BURST_CYCLES bat ke GLOW_PERIOD/
+        BOUNCE_PERIOD/BOUNCE_REST_SECONDS la bao nhieu. Tray icon (nho, de
+        bi bo qua khi ẩn xuống khay) thi nhap nhay LIEN TUC suot luc con
+        canh bao - xem _tray_pulse_tick. Sau khi user da check-in/xac nhan
+        (ack) trong khung gio -> ca 2 im lang, nut chuyen "✓ Done" xanh la.
         """
         in_schedule = self._update_widget_state()
         alert_active = (
@@ -833,10 +853,17 @@ class Controller:
         now = time.time()
         if alert_active:
             if now >= self._next_burst_at:
-                # Bat dau 1 dot pulse MOI: luan phien Option A <-> B (so do
-                # trang thai ATTENTION_ACTIVE_A <-> ATTENTION_ACTIVE_B).
-                self._active_option = "A" if self._active_option == "B" else "B"
-                self._burst_until = now + PULSE_PERIOD * PULSE_BURST_CYCLES
+                # Bat dau 1 dot pulse MOI. Neu WIDGET_PULSE_STYLE = "both":
+                # luan phien Option A <-> B (so do trang thai
+                # ATTENTION_ACTIVE_A <-> ATTENTION_ACTIVE_B). Neu style co
+                # dinh "A"/"B" thi luon dung option do, khong luan phien.
+                if WIDGET_PULSE_STYLE == "both":
+                    self._active_option = ("A" if self._active_option == "B"
+                                            else "B")
+                else:
+                    self._active_option = WIDGET_PULSE_STYLE
+                self._burst_until = now + (self._burst_cycle_seconds()
+                                            * PULSE_BURST_CYCLES)
                 self._next_burst_at = now + PULSE_REST_SECONDS
                 if not self._anim_timer.isActive():
                     self._anim_timer.start()
@@ -891,6 +918,17 @@ class Controller:
                 return "checked_in"
             return "default"
         return "default"
+
+    def _burst_cycle_seconds(self):
+        """Do dai (giay) cua 1 NHIP thuoc option dang active (_active_option),
+        dung de tinh do dai 1 dot pulse = PULSE_BURST_CYCLES * gia tri nay -
+        xem _state_tick. Option A: 1 nhip = 1 vong glow (GLOW_PERIOD). Option
+        B: 1 nhip = 1 vong nhay VA khoang nghi giua 2 vong (BOUNCE_PERIOD +
+        BOUNCE_REST_SECONDS), vi do la chu ky thuc te cua _next_bounce_at
+        trong _anim_tick."""
+        if self._active_option == "A":
+            return GLOW_PERIOD
+        return BOUNCE_PERIOD + BOUNCE_REST_SECONDS
 
     def _anim_tick(self):
         """~25fps CHI trong luc co dot pulse cua WIDGET: dieu khien Option A
